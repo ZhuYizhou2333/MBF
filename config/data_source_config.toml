@@ -1,0 +1,15 @@
+[data_source]
+# 数据根目录路径
+root_path = ""
+
+# h5文件命名规则
+# {year}: 4位年份
+# {month}: 2位月份
+# {symbol}: 标的代码
+file_name_format = "{year}-{month}_{symbol}.h5"
+
+# 默认交易所
+default_exchange = "binance"
+
+# 默认标的类型
+default_type = "spot"
