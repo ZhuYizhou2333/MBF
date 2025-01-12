@@ -1,16 +1,14 @@
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
+from ..data_source.realtime_data_source import RealTimeDataSource
 from .base import BaseStrategy
-from .manager import StrategyManager
 from .order import Order, OrderStatus, OrderDirection, OrderType, OrderTimeInForce
-from .signal import Signal
 from .position import Position
 
 class BacktestEngine:
     """回测引擎"""
-    
-    def __init__(self, strategy: BaseStrategy, data: pd.DataFrame):
+    def __init__(self, strategy: BaseStrategy, data_loader:RealTimeDataSource):
         """
         初始化回测引擎
         
@@ -19,10 +17,8 @@ class BacktestEngine:
             data: 历史数据
         """
         self.strategy = strategy
-        self.data = data
-        self.orders: List[Order] = []
-        self.positions: Dict[str, Position] = {}  # 仓位管理
-        self.current_idx = 0
+        self.current_data = None # 当前时间点的数据
+        self.data_loader = data_loader # 数据加载器
         self.performance_stats = {
             'total_trades': 0,
             'win_trades': 0,
@@ -31,6 +27,7 @@ class BacktestEngine:
             'total_commission': 0.0,  # 新增手续费统计
             'start_time': datetime.now()
         }
+        self.commission_rate = 0.0005  # 默认手续费率
         
     def run(self) -> Dict:
         """
@@ -39,34 +36,30 @@ class BacktestEngine:
         Returns:
             回测结果
         """
-        for idx in range(len(self.data)):
-            self.current_idx = idx
+        while True:
+            self.current_data = self.data_loader.push_next_tick()
             self._process_tick()
-            
+            if self.current_data is None:
+                break
         return self._generate_report()
-        
+    
     def _process_tick(self) -> None:
         """处理每个tick数据"""
-        current_data = self.data.iloc[self.current_idx].to_dict()
-        
-        # 更新策略
-        self.strategy.on_data(current_data)
-        
+        # 更新策略，生成订单信号
+        self.strategy.on_data(self.current_data)
         # 处理订单
         self._process_orders()
-        
         # 更新仓位和性能统计
         self._update_performance_stats()
         
     def _process_orders(self) -> None:
         """处理订单"""
-        current_data = self.data.iloc[self.current_idx]
-        ask_price = current_data['askp1']
-        bid_price = current_data['bidp1']
-        current_timestamp = pd.to_datetime(current_data['timestamp'])
+        ask_price = self.current_data['askp1']
+        bid_price = self.current_data['bidp1']
+        current_timestamp = pd.to_datetime(self.current_data['timestamp'])
         
         # 处理待处理订单
-        for order in self.orders[:]:
+        for order in self.strategy.orders:
             if order.status == OrderStatus.PENDING:
                 # 检查订单是否过期
                 if order.time_in_force == OrderTimeInForce.GTC:
@@ -122,9 +115,9 @@ class BacktestEngine:
             # 处理已成交订单
             if order.status == OrderStatus.FILLED:
                 # 处理仓位
-                if order.symbol in self.positions:
+                if order.instrument in self.strategy.positions:
                     # 已有仓位
-                    position = self.positions[order.symbol]
+                    position = self.strategy.positions[order.instrument]
                     if position.direction == order.direction:
                         # 加仓
                         total_volume = position.volume + order.volume
@@ -133,14 +126,14 @@ class BacktestEngine:
                         position.volume = total_volume
                         # 计算开仓手续费
                         position.add_commission(order.filled_price, order.volume)
-                        self.performance_stats['total_commission'] += order.filled_price * order.volume * self.strategy.commission_rate
+                        self.performance_stats['total_commission'] += order.filled_price * order.volume * self.commission_rate
                     else:
                         # 平仓或反向开仓
                         if order.volume >= position.volume:
                             # 完全平仓
                             pnl = position.close()
                             self.performance_stats['total_commission'] += position.total_commission
-                            del self.positions[order.symbol]
+                            del self.strategy.positions[order.instrument]
                         else:
                             # 部分平仓
                             pnl = (order.filled_price - position.open_price) * order.volume
@@ -148,36 +141,46 @@ class BacktestEngine:
                                 pnl = -pnl
                             position.volume -= order.volume
                             # 计算平仓手续费
-                            commission = order.filled_price * order.volume * self.strategy.commission_rate
+                            commission = order.filled_price * order.volume * self.commission_rate
                             position.total_commission += commission
                             self.performance_stats['total_commission'] += commission
                 else:
                     # 新开仓
-                    self.positions[order.symbol] = Position(
-                        symbol=order.symbol,
+                    self.strategy.positions[order.instrument] = Position(
+                        symbol=order.instrument,
                         direction=order.direction,
                         volume=order.volume,
                         price=order.filled_price,
                         timestamp=current_timestamp,
-                        commission_rate=self.strategy.commission_rate
+                        commission_rate=self.commission_rate
                     )
                     # 计算开仓手续费
-                    self.positions[order.symbol].add_commission(order.filled_price, order.volume)
-                    self.performance_stats['total_commission'] += order.filled_price * order.volume * self.strategy.commission_rate
+                    self.strategy.positions[order.instrument].add_commission(order.filled_price, order.volume)
+                    self.performance_stats['total_commission'] += order.filled_price * order.volume * self.commission_rate
                     
-                # 调用策略的成交回调
-                self.strategy.on_order_filled(order)
+                # 调用成交回调
+                self.strategy.on_trade(order)
                 # 从待处理订单中移除
-                self.orders.remove(order)
+                self.strategy.orders.remove(order)
+
+            elif order.status == OrderStatus.CANCELLED:
+                # 调用撤单回调
+                self.strategy.on_cancel(order)
+                # 从待处理订单中移除
+                self.strategy.orders.remove(order)
+
+
+    def _get_current_price(self, symbol: str) -> float:
+        """获取当前标的的最新价格"""
+        return (self.current_data[symbol]['askp1'] + self.current_data[symbol]['bidp1']) / 2
                     
     def _update_performance_stats(self) -> None:
         """基于仓位更新性能统计"""
-        current_price = self.data.iloc[self.current_idx]['close']
         
         # 更新所有仓位的市值和盈亏
         total_pnl = 0.0
-        for position in self.positions.values():
-            position.update(current_price)
+        for position in self.strategy.positions.values():
+            position.update(self._get_current_price(position.symbol)) # todo: current_price
             total_pnl += position.pnl
             
         # 更新净值曲线

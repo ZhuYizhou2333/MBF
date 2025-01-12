@@ -1,7 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 import pandas as pd
-
+from .order import Order, OrderStatus, OrderDirection, OrderType, OrderTimeInForce
+from .position import Position
+'''
+设计理念：
+策略专注于下单，平仓逻辑。可获取未平仓订单，持仓信息等。
+'''
 class BaseStrategy(ABC):
     """策略基类，所有策略都需要继承此类"""
     
@@ -16,8 +21,9 @@ class BaseStrategy(ABC):
         """
         self.strategy_id = strategy_id
         self.instruments = instruments
+        self.orders : List[Order] = []  # 未平仓订单
+        self.positions : Dict[str, Position] = {} # 持仓信息
         self.params = params or {}
-        self.commission_rate = self.params.get('commission_rate', 0.0005)  # 默认手续费率0.05%
         
     @abstractmethod
     def on_data(self, data: pd.DataFrame) -> None:
@@ -30,9 +36,9 @@ class BaseStrategy(ABC):
         pass
         
     @abstractmethod
-    def on_order(self, order: Dict) -> None:
+    def on_order(self, order: Order) -> None:
         """
-        订单回调
+        发送订单回调
         
         Args:
             order: 订单信息
@@ -40,7 +46,7 @@ class BaseStrategy(ABC):
         pass
         
     @abstractmethod
-    def on_trade(self, trade: Dict) -> None:
+    def on_trade(self, Order: Order) -> None:
         """
         成交回调
         
@@ -49,7 +55,7 @@ class BaseStrategy(ABC):
         """
         pass
         
-    def send_order(self, order: Dict) -> None:
+    def send_order(self, Order: Order) -> None:
         """
         发送订单
         
@@ -57,4 +63,12 @@ class BaseStrategy(ABC):
             order: 订单信息
         """
         # 具体实现由策略管理器处理
+        pass
+
+    def on_cancel(self, Order:Order)->None:
+        """
+        撤单回调
+        Args:
+            order: 订单信息
+        """
         pass

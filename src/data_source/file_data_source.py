@@ -109,14 +109,6 @@ class FileDataSource(DataSource):
         for symbol in symbols:
             self._data.pop(symbol, None)
 
-    def start(self) -> None:
-        """开始推送数据"""
-        pass
-
-    def stop(self) -> None:
-        """停止推送数据"""
-        pass
-
     def get_current_data(self) -> pd.DataFrame:
         """获取当前数据
         
