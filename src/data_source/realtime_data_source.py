@@ -34,11 +34,6 @@ class RealTimeDataSource(DataSource):
             
         return aligned_df
         
-    def start(self):
-        """开始推送数据"""
-        self.current_idx = 0
-        self._push_next_tick()
-        
     def push_next_tick(self):
         """推送下一个tick数据"""
         if self.current_idx >= len(self.aligned_data):

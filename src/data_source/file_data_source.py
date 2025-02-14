@@ -99,24 +99,6 @@ class FileDataSource(DataSource):
         self._load_data()
         self._resample_data()
 
-    def unsubscribe(self, symbols: List[str]) -> None:
-        """取消订阅
-        
-        Args:
-            symbols: 标的代码列表
-        """
-        self.symbols = [s for s in self.symbols if s not in symbols]
-        for symbol in symbols:
-            self._data.pop(symbol, None)
-
-    def get_current_data(self) -> pd.DataFrame:
-        """获取当前数据
-        
-        Returns:
-            包含时间、买价队列、卖价队列的多维DataFrame
-        """
-        return self._resampled_data
-
     def load_data(self, symbol: str) -> pd.DataFrame:
         """加载指定标的的历史数据
         
